@@ -7341,7 +7341,7 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
         <div className="relative">
           <Input
             type="text"
-            placeholder="Search by equipment name, tag number, job number, or MSN..."
+            placeholder="Search by equipment name, tag number, job number,MSN, or PO number..."
             className="h-9 sm:h-10 text-xs sm:text-sm pr-10"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -7453,6 +7453,9 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                   (eq.tagNumber || '').toLowerCase().includes(searchLower) ||
                   (eq.jobNumber || '').toLowerCase().includes(searchLower) ||
                   (eq.manufacturingSerial || '').toLowerCase().includes(searchLower);
+                  (eq.poCdd || '').toLowerCase().includes(searchLower) ||
+                  (eq.poNumber || (eq as any).po_number || '').toLowerCase().includes(searchLower) ||
+                  ((eq.custom_fields?.find((f: any) => f.name === 'PO Number')?.value) || '').toLowerCase().includes(searchLower);
                 return matchesSearch;
               }
               
@@ -10070,6 +10073,9 @@ const EquipmentGrid = ({ equipment, projectName, projectId, onBack, onViewDetail
                     (eq.tagNumber || '').toLowerCase().includes(searchLower) ||
                     (eq.jobNumber || '').toLowerCase().includes(searchLower) ||
                     (eq.manufacturingSerial || '').toLowerCase().includes(searchLower);
+                    (eq.poCdd || '').toLowerCase().includes(searchLower) ||
+                    (eq.poNumber || (eq as any).po_number || '').toLowerCase().includes(searchLower) ||
+                    ((eq.custom_fields?.find((f: any) => f.name === 'PO Number')?.value) || '').toLowerCase().includes(searchLower);
                 }
                 return true;
               })
