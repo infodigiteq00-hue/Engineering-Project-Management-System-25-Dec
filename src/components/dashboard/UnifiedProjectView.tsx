@@ -90,14 +90,19 @@ const UnifiedProjectView = ({
     documentName: ''
   });
 
-  // Load VDCR data
+  // Load VDCR activity logs instead of just records
   const loadVDCRData = async () => {
     try {
       setIsLoadingVDCR(true);
-      const records = await fastAPI.getVDCRRecordsByProject(projectId);
-      setVdcrRecords(records as any[]);
+      console.log('🔄 Loading VDCR activity logs for project:', projectId);
+      // Import activityApi to fetch VDCR activity logs
+      const { activityApi } = await import('@/lib/activityApi');
+      const logs = await activityApi.getVDCRActivityLogs(projectId);
+      console.log('✅ Loaded VDCR activity logs:', logs?.length || 0, 'logs');
+      setVdcrRecords(logs as any[]);
     } catch (error) {
-      // console.error('Error loading VDCR data:', error);
+      console.error('❌ Error loading VDCR activity logs:', error);
+      setVdcrRecords([]);
     } finally {
       setIsLoadingVDCR(false);
     }
@@ -456,16 +461,38 @@ const UnifiedProjectView = ({
 
   // Export functions
   const exportVDCRLogsToExcel = () => {
-    const records = vdcrRecords || [];
-    const vdcrData = records.map(record => ({
-      'Status': record.status || 'Unknown',
-      'Document': record.document_name || 'Unknown Document',
-      'Updated': record.last_update ? new Date(record.last_update).toLocaleDateString() : 'Unknown',
-      'Time Ago': record.last_update ? 
-        `${Math.floor((new Date().getTime() - new Date(record.last_update).getTime()) / (1000 * 60 * 60 * 24))} days ago` : 
-        'Unknown',
-      'Updated By': record.updated_by_user?.full_name || record.updated_by || 'Unknown User'
-    }));
+    const logs = vdcrRecords || [];
+    const vdcrData = logs.map(log => {
+      const documentName = log.vdcr_record?.document_name || 
+                          log.metadata?.documentName || 
+                          'VDCR Activity';
+      let status = 'Activity';
+      if (log.activity_type === 'vdcr_status_changed') {
+        status = log.new_value === 'approved' ? 'Approved' :
+                log.new_value === 'rejected' ? 'Rejected' :
+                log.new_value === 'received-for-comment' ? 'Received for Comments' :
+                log.new_value === 'sent-for-approval' ? 'Sent for Approval' :
+                log.new_value === 'pending' ? 'Pending' : 'Activity';
+      } else if (log.vdcr_record?.status) {
+        status = log.vdcr_record.status === 'approved' ? 'Approved' :
+                log.vdcr_record.status === 'rejected' ? 'Rejected' :
+                log.vdcr_record.status === 'received-for-comment' ? 'Received for Comments' :
+                log.vdcr_record.status === 'sent-for-approval' ? 'Sent for Approval' :
+                log.vdcr_record.status === 'pending' ? 'Pending' : 'Activity';
+      }
+      
+      return {
+        'Activity Type': log.activity_type || 'Unknown',
+        'Action': log.action_description || 'Unknown',
+        'Status': status,
+        'Document': documentName,
+        'Updated': log.created_at ? new Date(log.created_at).toLocaleDateString() : 'Unknown',
+        'Time Ago': log.created_at ? 
+          `${Math.floor((new Date().getTime() - new Date(log.created_at).getTime()) / (1000 * 60 * 60 * 24))} days ago` : 
+          'Unknown',
+        'Updated By': log.created_by_user?.full_name || 'Unknown User'
+      };
+    });
 
     exportToExcel(vdcrData, 'VDCR_Logs');
   };
@@ -1487,32 +1514,59 @@ const UnifiedProjectView = ({
                     <div className="space-y-4">
                         {/* Filtered VDCR Logs */}
                         {(() => {
-                          // Use real VDCR records from database
-                          const vdcrLogs = (vdcrRecords || []).map((record, index) => ({
-                            id: record.id || index + 1,
-                            status: record.status === 'approved' ? 'Approved' :
-                                   record.status === 'rejected' ? 'Rejected' :
-                                   record.status === 'received-for-comment' ? 'Received for Comments' :
-                                   record.status === 'sent-for-approval' ? 'Sent for Approval' :
-                                   record.status === 'pending' ? 'Pending' : 'Unknown',
-                            document: record.document_name || 'Unknown Document',
-                            updated: record.updated_at ? new Date(record.updated_at).toLocaleDateString('en-US', { 
-                              month: 'short', 
-                              day: '2-digit', 
-                              year: 'numeric' 
-                            }) : new Date().toLocaleDateString(),
-                            timeAgo: record.updated_at ? 
-                              `${Math.floor((new Date().getTime() - new Date(record.updated_at).getTime()) / (1000 * 60 * 60 * 24))} days ago` : 
-                              'Unknown',
-                            updatedBy: record.updated_by_user?.full_name || record.updated_by || 'Unknown User'
-                          }));
+                          // Use VDCR activity logs from database
+                          const vdcrLogs = (vdcrRecords || []).map((log, index) => {
+                            // Determine status based on activity type and new_value
+                            let status = 'Activity';
+                            if (log.activity_type === 'vdcr_status_changed') {
+                              status = log.new_value === 'approved' ? 'Approved' :
+                                       log.new_value === 'rejected' ? 'Rejected' :
+                                       log.new_value === 'received-for-comment' ? 'Received for Comments' :
+                                       log.new_value === 'sent-for-approval' ? 'Sent for Approval' :
+                                       log.new_value === 'pending' ? 'Pending' : 'Activity';
+                            } else if (log.vdcr_record?.status) {
+                              status = log.vdcr_record.status === 'approved' ? 'Approved' :
+                                      log.vdcr_record.status === 'rejected' ? 'Rejected' :
+                                      log.vdcr_record.status === 'received-for-comment' ? 'Received for Comments' :
+                                      log.vdcr_record.status === 'sent-for-approval' ? 'Sent for Approval' :
+                                      log.vdcr_record.status === 'pending' ? 'Pending' : 'Activity';
+                            }
+                            
+                            // Get document name from metadata or vdcr_record
+                            const documentName = log.vdcr_record?.document_name || 
+                                                log.metadata?.documentName || 
+                                                'VDCR Activity';
+                            
+                            return {
+                              id: log.id || index + 1,
+                              status: status,
+                              document: documentName,
+                              updated: log.created_at ? new Date(log.created_at).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: '2-digit', 
+                                year: 'numeric' 
+                              }) : new Date().toLocaleDateString(),
+                              timeAgo: log.created_at ? 
+                                `${Math.floor((new Date().getTime() - new Date(log.created_at).getTime()) / (1000 * 60 * 60 * 24))} days ago` : 
+                                'Unknown',
+                              updatedBy: log.created_by_user?.full_name || 'Unknown User',
+                              activityType: log.activity_type,
+                              actionDescription: log.action_description,
+                              fieldName: log.field_name,
+                              oldValue: log.old_value,
+                              newValue: log.new_value,
+                              metadata: log.metadata
+                            };
+                          });
 
                           const filteredLogs = vdcrSearchQuery
                             ? vdcrLogs.filter(log =>
                                 log.document.toLowerCase().includes(vdcrSearchQuery.toLowerCase()) ||
                                 log.status.toLowerCase().includes(vdcrSearchQuery.toLowerCase()) ||
                                 log.updatedBy.toLowerCase().includes(vdcrSearchQuery.toLowerCase()) ||
-                                log.updated.toLowerCase().includes(vdcrSearchQuery.toLowerCase())
+                                log.updated.toLowerCase().includes(vdcrSearchQuery.toLowerCase()) ||
+                                (log.actionDescription && log.actionDescription.toLowerCase().includes(vdcrSearchQuery.toLowerCase())) ||
+                                (log.activityType && log.activityType.toLowerCase().includes(vdcrSearchQuery.toLowerCase()))
                               )
                             : vdcrLogs;
 
@@ -1537,8 +1591,36 @@ const UnifiedProjectView = ({
                                     log.status === 'In Progress' ? 'bg-purple-500' : 'bg-gray-500'
                                   }`}></div>
                                   <div className="flex-1 min-w-0 pr-16 sm:pr-0">
-                                    <p className="text-xs sm:text-sm font-medium text-gray-800 truncate">VDCR Document {log.status}</p>
+                                    <p className="text-xs sm:text-sm font-medium text-gray-800 truncate">
+                                      {log.activityType === 'vdcr_created' ? 'VDCR Record Created' :
+                                       log.activityType === 'vdcr_field_updated' ? `VDCR ${log.fieldName || 'Field'} Updated` :
+                                       log.activityType === 'vdcr_status_changed' ? `VDCR Status Changed to ${log.status}` :
+                                       log.activityType === 'vdcr_document_uploaded' ? 'VDCR Document Uploaded' :
+                                       log.activityType === 'vdcr_deleted' ? 'VDCR Record Deleted' :
+                                       `VDCR ${log.status}`}
+                                    </p>
                                     <p className="text-[11px] sm:text-xs text-gray-500 truncate">{log.document}</p>
+                                    
+                                    {/* Show highlighted old → new values for field updates */}
+                                    {(log.activityType === 'vdcr_field_updated' || log.activityType === 'vdcr_status_changed') && log.oldValue !== null && log.newValue !== null ? (
+                                      <div className="mt-2 space-y-1.5">
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs">
+                                          <span className="font-medium text-gray-700 flex-shrink-0">{log.fieldName || 'Field'}:</span>
+                                          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0">
+                                            <span className="px-1.5 sm:px-2 py-0.5 bg-red-50 text-red-700 rounded border border-red-200 line-through text-[10px] sm:text-xs truncate max-w-[120px] sm:max-w-none">
+                                              {String(log.oldValue || 'Not set')}
+                                            </span>
+                                            <ArrowRight size={10} className="sm:w-3 sm:h-3 text-gray-400 flex-shrink-0" />
+                                            <span className="px-1.5 sm:px-2 py-0.5 bg-green-50 text-green-700 rounded border border-green-200 font-medium text-[10px] sm:text-xs truncate max-w-[120px] sm:max-w-none">
+                                              {String(log.newValue || 'Not set')}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : log.actionDescription ? (
+                                      <p className="text-[10px] sm:text-xs text-gray-400 mt-1 line-clamp-2">{log.actionDescription}</p>
+                                    ) : null}
+                                    
                                     <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-4 mt-1">
                                       <p className="text-[11px] sm:text-xs text-gray-400">Updated: {log.updated} | {log.timeAgo}</p>
                                       <p className="text-[11px] sm:text-xs text-blue-600 font-medium">Updated by: {log.updatedBy}</p>

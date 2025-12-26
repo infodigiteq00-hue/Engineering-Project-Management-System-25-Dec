@@ -13,6 +13,7 @@ import { fastAPI } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
+import { logVDCRCreated, logVDCRUpdated, logVDCRStatusChanged, logVDCRDocumentUploaded, logVDCRDeleted, logVDCRFieldUpdated } from "@/lib/activityLogger";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -545,16 +546,54 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
         // Create new VDCR record
         try {
           const newRecord = await fastAPI.createVDCRRecord(vdcrData);
-          // console.log('✅ New VDCR record created:', newRecord);
+          console.log('✅ New VDCR record created:', newRecord);
 
           // Set the selectedVDCR to the newly created record ID
-          if (newRecord && (newRecord as any).id) {
-            const recordId = (newRecord as any).id;
+          // Supabase POST with return=representation usually returns an array
+          let recordId = null;
+          
+          // Handle array response (most common)
+          if (Array.isArray(newRecord) && newRecord.length > 0) {
+            recordId = newRecord[0].id;
+            console.log('📝 Extracted recordId from array:', recordId);
+          } 
+          // Handle object response
+          else if (newRecord && typeof newRecord === 'object' && (newRecord as any).id) {
+            recordId = (newRecord as any).id;
+            console.log('📝 Extracted recordId from object:', recordId);
+          }
+          
+          if (recordId) {
             setSelectedVDCR(recordId);
-            // console.log('🎯 Set selectedVDCR to:', recordId);
+            console.log('🎯 Set selectedVDCR to:', recordId);
 
-            // Document URL is already saved in vdcr_records.document_url field
-            // console.log('✅ Document URL saved in vdcr_records.document_url field');
+            // Log VDCR creation (always log creation separately)
+            try {
+              console.log('📝 Logging VDCR creation:', { projectId, recordId, documentName: formData.documentName });
+              await logVDCRCreated(projectId, recordId, formData.documentName);
+              console.log('✅ VDCR creation logged successfully');
+            } catch (logError) {
+              console.error('⚠️ Error logging VDCR creation (non-fatal):', logError);
+              console.error('⚠️ Log error details:', JSON.stringify(logError, null, 2));
+            }
+            
+            // Log document upload separately if document was uploaded during creation
+            if (documentUrl) {
+              try {
+                console.log('📝 Logging document upload during creation:', { projectId, recordId, fileName: documentUrl.split('/').pop() });
+                await logVDCRDocumentUploaded(projectId, recordId, formData.documentName, documentUrl.split('/').pop() || 'document');
+                console.log('✅ Document upload logged successfully during creation');
+              } catch (logError) {
+                console.error('⚠️ Error logging document upload (non-fatal):', logError);
+              }
+            }
+          } else {
+            console.error('❌ Failed to extract recordId from response:', newRecord);
+            toast({ 
+              title: 'Warning', 
+              description: 'VDCR record created but activity log may not be recorded. Please refresh the page.', 
+              variant: 'default' 
+            });
           }
         } catch (error: any) {
           // 🔧 FIX: If 409 error (foreign key constraint), fetch correct ID and retry
@@ -565,8 +604,44 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
               // Retry with correct user ID
               vdcrData.updated_by = correctUserId;
               const newRecord = await fastAPI.createVDCRRecord(vdcrData);
-              if (newRecord && (newRecord as any).id) {
-                setSelectedVDCR((newRecord as any).id);
+              console.log('✅ New VDCR record created (retry):', newRecord);
+              
+              let recordId = null;
+              // Handle array response
+              if (Array.isArray(newRecord) && newRecord.length > 0) {
+                recordId = newRecord[0].id;
+              } 
+              // Handle object response
+              else if (newRecord && typeof newRecord === 'object' && (newRecord as any).id) {
+                recordId = (newRecord as any).id;
+              }
+              
+              if (recordId) {
+                setSelectedVDCR(recordId);
+                console.log('🎯 Set selectedVDCR to (retry):', recordId);
+                
+                // Log VDCR creation after retry (always log creation separately)
+                try {
+                  console.log('📝 Logging VDCR creation (retry):', { projectId, recordId, documentName: formData.documentName });
+                  await logVDCRCreated(projectId, recordId, formData.documentName);
+                  console.log('✅ VDCR creation logged successfully (retry)');
+                } catch (logError) {
+                  console.error('⚠️ Error logging VDCR creation (non-fatal):', logError);
+                  console.error('⚠️ Log error details:', JSON.stringify(logError, null, 2));
+                }
+                
+                // Log document upload separately if document was uploaded during creation (retry)
+                if (documentUrl) {
+                  try {
+                    console.log('📝 Logging document upload during creation (retry):', { projectId, recordId, fileName: documentUrl.split('/').pop() });
+                    await logVDCRDocumentUploaded(projectId, recordId, formData.documentName, documentUrl.split('/').pop() || 'document');
+                    console.log('✅ Document upload logged successfully during creation (retry)');
+                  } catch (logError) {
+                    console.error('⚠️ Error logging document upload (non-fatal):', logError);
+                  }
+                }
+              } else {
+                console.error('❌ Failed to extract recordId from response (retry):', newRecord);
               }
             } else {
               throw new Error('Unable to fetch correct user ID. Please logout and login again.');
@@ -578,6 +653,44 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
       } else {
         // Update existing VDCR record - only send updatable fields
         if (!editingVDCR) return;
+
+        // Track changes for logging - EVERY change gets separate log entry
+        const changes: Record<string, { old: any; new: any }> = {};
+        
+        if (editingVDCR.status !== formData.status) {
+          changes.status = { old: editingVDCR.status, new: formData.status };
+        }
+        if (editingVDCR.documentName !== formData.documentName) {
+          changes.documentName = { old: editingVDCR.documentName, new: formData.documentName };
+        }
+        if (editingVDCR.revision !== formData.revision) {
+          changes.revision = { old: editingVDCR.revision, new: formData.revision };
+        }
+        if (editingVDCR.codeStatus !== formData.codeStatus) {
+          changes.codeStatus = { old: editingVDCR.codeStatus, new: formData.codeStatus };
+        }
+        if (editingVDCR.clientDocNo !== formData.clientDocNo) {
+          changes.clientDocNo = { old: editingVDCR.clientDocNo, new: formData.clientDocNo };
+        }
+        if (editingVDCR.internalDocNo !== formData.internalDocNo) {
+          changes.internalDocNo = { old: editingVDCR.internalDocNo, new: formData.internalDocNo };
+        }
+        if (editingVDCR.srNo !== formData.srNo) {
+          changes.srNo = { old: editingVDCR.srNo, new: formData.srNo };
+        }
+        if (editingVDCR.remarks !== formData.remarks) {
+          changes.remarks = { old: editingVDCR.remarks || '', new: formData.remarks || '' };
+        }
+        
+        // Check equipment changes
+        const oldEquipmentTags = JSON.stringify(editingVDCR.equipmentTagNo?.sort() || []);
+        const newEquipmentTags = JSON.stringify(selectedEquipments.sort());
+        if (oldEquipmentTags !== newEquipmentTags) {
+          changes.equipmentTagNumbers = { 
+            old: editingVDCR.equipmentTagNo?.join(', ') || '', 
+            new: selectedEquipments.join(', ') || '' 
+          };
+        }
 
         const updateData = {
           sr_no: formData.srNo,
@@ -598,6 +711,51 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
 
         try {
           await fastAPI.updateVDCRRecord(editingVDCR.id, updateData);
+          
+          // Log document upload separately if document was uploaded (ALWAYS separate log entry)
+          if (documentUrl && !editingVDCR.documentUrl) {
+            try {
+              console.log('📝 Logging document upload during update:', { projectId, vdcrId: editingVDCR.id, fileName: documentUrl.split('/').pop() });
+              await logVDCRDocumentUploaded(projectId, editingVDCR.id, formData.documentName, documentUrl.split('/').pop() || 'document');
+              console.log('✅ Document upload logged successfully during update');
+            } catch (logError) {
+              console.error('⚠️ Error logging document upload (non-fatal):', logError);
+            }
+          }
+          
+          // Log status change separately if status changed (ALWAYS separate log entry)
+          if (changes.status) {
+            try {
+              console.log('📝 Logging status change:', { projectId, vdcrId: editingVDCR.id, oldStatus: changes.status.old, newStatus: changes.status.new });
+              await logVDCRStatusChanged(projectId, editingVDCR.id, formData.documentName, changes.status.old, changes.status.new);
+              console.log('✅ Status change logged successfully');
+            } catch (logError) {
+              console.error('⚠️ Error logging status change (non-fatal):', logError);
+            }
+          }
+          
+          // Log each field update separately (EVERY field change gets its own log entry)
+          const otherChanges = Object.fromEntries(
+            Object.entries(changes).filter(([key]) => key !== 'status')
+          );
+          
+          // Log each field change as a separate entry
+          for (const [fieldName, fieldChange] of Object.entries(otherChanges)) {
+            try {
+              console.log('📝 Logging field update:', { projectId, vdcrId: editingVDCR.id, fieldName, oldValue: fieldChange.old, newValue: fieldChange.new });
+              await logVDCRFieldUpdated(
+                projectId, 
+                editingVDCR.id, 
+                formData.documentName, 
+                fieldName, 
+                fieldChange.old || '', 
+                fieldChange.new || ''
+              );
+              console.log(`✅ Field update logged successfully: ${fieldName}`);
+            } catch (logError) {
+              console.error(`⚠️ Error logging field update for ${fieldName} (non-fatal):`, logError);
+            }
+          }
         } catch (error: any) {
           // 🔧 FIX: If 409 error (foreign key constraint), fetch correct ID and retry
           if (error?.response?.status === 409 && error?.response?.data?.code === '23503') {
@@ -607,6 +765,41 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
               // Retry with correct user ID
               updateData.updated_by = correctUserId;
               await fastAPI.updateVDCRRecord(editingVDCR.id, updateData);
+              
+              // Log after successful retry
+              if (documentUrl && !editingVDCR.documentUrl) {
+                try {
+                  await logVDCRDocumentUploaded(projectId, editingVDCR.id, formData.documentName, documentUrl.split('/').pop() || 'document');
+                } catch (logError) {
+                  console.error('⚠️ Error logging document upload (non-fatal):', logError);
+                }
+              }
+              if (changes.status) {
+                try {
+                  await logVDCRStatusChanged(projectId, editingVDCR.id, formData.documentName, changes.status.old, changes.status.new);
+                } catch (logError) {
+                  console.error('⚠️ Error logging status change (non-fatal):', logError);
+                }
+              }
+              const otherChanges = Object.fromEntries(
+                Object.entries(changes).filter(([key]) => key !== 'status')
+              );
+              
+              // Log each field change as a separate entry (retry case)
+              for (const [fieldName, fieldChange] of Object.entries(otherChanges)) {
+                try {
+                  await logVDCRFieldUpdated(
+                    projectId, 
+                    editingVDCR.id, 
+                    formData.documentName, 
+                    fieldName, 
+                    fieldChange.old || '', 
+                    fieldChange.new || ''
+                  );
+                } catch (logError) {
+                  console.error(`⚠️ Error logging field update for ${fieldName} (non-fatal):`, logError);
+                }
+              }
             } else {
               throw new Error('Unable to fetch correct user ID. Please logout and login again.');
             }
@@ -647,7 +840,19 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
   const handleDeleteVDCR = async (recordId: string) => {
     if (window.confirm('Are you sure you want to delete this VDCR record? This action cannot be undone.')) {
       try {
+        // Get document name before deletion for logging
+        const recordToDelete = vdcrData.find(r => r.id === recordId);
+        const documentName = recordToDelete?.documentName || 'Unknown Document';
+        
         await fastAPI.deleteVDCRRecord(recordId);
+        
+        // Log deletion
+        try {
+          await logVDCRDeleted(projectId, recordId, documentName);
+        } catch (logError) {
+          console.error('⚠️ Error logging VDCR deletion (non-fatal):', logError);
+        }
+        
         // Reload data from Supabase
         await loadVDCRData();
       } catch (error) {
@@ -874,6 +1079,23 @@ const ProjectsVDCR = ({ projectId, projectName, onBack, onViewDetails, onViewEqu
 
       setUploadedFiles(prev => [...prev, newDocument]);
       setFormData(prev => ({ ...prev, documentName: uploadedFile.name }));
+
+      // Log document upload separately if VDCR record exists (editing mode)
+      // This is a separate action from save, so log it separately
+      if (editingVDCR?.id) {
+        try {
+          console.log('📝 Logging document upload (separate action):', { 
+            projectId, 
+            vdcrId: editingVDCR.id, 
+            documentName: formData.documentName || uploadedFile.name, 
+            fileName: uploadedFile.name 
+          });
+          await logVDCRDocumentUploaded(projectId, editingVDCR.id, formData.documentName || uploadedFile.name, uploadedFile.name);
+          console.log('✅ Document upload logged successfully (separate action)');
+        } catch (logError) {
+          console.error('⚠️ Error logging document upload (non-fatal):', logError);
+        }
+      }
 
       // console.log('✅ File uploaded to storage successfully');
       // console.log('📄 Document URL will be saved to vdcr_records.document_url when form is submitted');

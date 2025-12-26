@@ -284,6 +284,110 @@ export const activityApi = {
       console.error('❌ Error fetching standalone equipment activity logs:', error);
       throw error;
     }
+  },
+
+  // ============================================================================
+  // VDCR ACTIVITY LOGS
+  // ============================================================================
+
+  // Log VDCR activity
+  async logVDCRActivity(data: {
+    projectId: string;
+    vdcrId?: string;
+    activityType: string;
+    actionDescription: string;
+    fieldName?: string;
+    oldValue?: string;
+    newValue?: string;
+    metadata?: any;
+    createdBy: string;
+  }) {
+    try {
+      console.log('📝 logVDCRActivity called with:', data);
+      const logData = {
+        project_id: data.projectId,
+        vdcr_id: data.vdcrId || null,
+        activity_type: data.activityType,
+        action_description: data.actionDescription,
+        field_name: data.fieldName || null,
+        old_value: data.oldValue || null,
+        new_value: data.newValue || null,
+        metadata: data.metadata || {},
+        created_by: data.createdBy
+      };
+
+      console.log('📝 Sending log data to API:', logData);
+      const response = await api.post('/vdcr_activity_logs', logData);
+      console.log('✅ VDCR activity logged successfully:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Error logging VDCR activity:', error);
+      console.error('❌ Error response:', error?.response?.data);
+      console.error('❌ Error status:', error?.response?.status);
+      console.error('❌ Error message:', error?.message);
+      // Don't throw - return null to prevent breaking main action
+      return null;
+    }
+  },
+
+  // Get VDCR activity logs by project
+  async getVDCRActivityLogs(projectId: string, filters?: {
+    vdcrId?: string;
+    activityType?: string;
+    userId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    try {
+      console.log('📋 Fetching VDCR activity logs for project:', projectId);
+      let query = `/vdcr_activity_logs?project_id=eq.${projectId}`;
+      
+      if (filters?.vdcrId) {
+        query += `&vdcr_id=eq.${filters.vdcrId}`;
+      }
+      if (filters?.activityType) {
+        query += `&activity_type=eq.${filters.activityType}`;
+      }
+      if (filters?.userId) {
+        query += `&created_by=eq.${filters.userId}`;
+      }
+      if (filters?.dateFrom) {
+        query += `&created_at=gte.${filters.dateFrom}`;
+      }
+      if (filters?.dateTo) {
+        query += `&created_at=lte.${filters.dateTo}`;
+      }
+      
+      query += `&order=created_at.desc`;
+      if (filters?.limit) {
+        query += `&limit=${filters.limit}`;
+      }
+      if (filters?.offset) {
+        query += `&offset=${filters.offset}`;
+      }
+      
+      query += `&select=*,created_by_user:created_by(full_name,email),vdcr_record:vdcr_id(document_name,status)`;
+      
+      console.log('📋 Query:', query);
+      const response = await api.get(query);
+      console.log('✅ VDCR activity logs fetched successfully:', response.data?.length || 0, 'logs');
+      return response.data || [];
+    } catch (error: any) {
+      console.error('❌ Error fetching VDCR activity logs:', error);
+      console.error('❌ Error response:', error?.response?.data);
+      console.error('❌ Error status:', error?.response?.status);
+      console.error('❌ Error message:', error?.message);
+      
+      // If table doesn't exist (404 or 42P01), return empty array instead of throwing
+      if (error?.response?.status === 404 || error?.message?.includes('does not exist') || error?.message?.includes('42P01')) {
+        console.warn('⚠️ VDCR activity logs table may not exist. Please run the SQL schema file.');
+        return [];
+      }
+      
+      throw error;
+    }
   }
 };
 

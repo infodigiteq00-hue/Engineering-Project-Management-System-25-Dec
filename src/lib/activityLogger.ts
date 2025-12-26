@@ -44,7 +44,16 @@ export enum ActivityType {
   NOTES_UPDATED = 'notes_updated',
   PROGRESS_ENTRY_ADDED = 'progress_entry_added',
   PROGRESS_ENTRY_UPDATED = 'progress_entry_updated',
-  PROGRESS_ENTRY_DELETED = 'progress_entry_deleted'
+  PROGRESS_ENTRY_DELETED = 'progress_entry_deleted',
+  
+  // VDCR actions
+  VDCR_CREATED = 'vdcr_created',
+  VDCR_UPDATED = 'vdcr_updated',
+  VDCR_DELETED = 'vdcr_deleted',
+  VDCR_STATUS_CHANGED = 'vdcr_status_changed',
+  VDCR_DOCUMENT_UPLOADED = 'vdcr_document_uploaded',
+  VDCR_DOCUMENT_UPDATED = 'vdcr_document_updated',
+  VDCR_FIELD_UPDATED = 'vdcr_field_updated'
 }
 
 // Helper function to get current user ID
@@ -408,5 +417,92 @@ export const logTeamMemberRemoved = async (projectId: string | null, equipmentId
     activityType: ActivityType.TEAM_MEMBER_REMOVED,
     actionDescription: `Team member "${memberName}" removed from ${role} role for "${equipmentType}" (${tagNumber})`,
     metadata: { equipmentType, tagNumber, memberName, role }
+  });
+};
+
+// ============================================================================
+// VDCR LOGGING FUNCTIONS
+// ============================================================================
+
+export const logVDCRCreated = async (projectId: string, vdcrId: string, documentName: string) => {
+  const userId = getCurrentUserId();
+  await activityApi.logVDCRActivity({
+    projectId,
+    vdcrId,
+    activityType: ActivityType.VDCR_CREATED,
+    actionDescription: `VDCR record created: ${documentName}`,
+    createdBy: userId,
+    metadata: { documentName }
+  });
+};
+
+export const logVDCRUpdated = async (projectId: string, vdcrId: string, documentName: string, changes: Record<string, { old: any; new: any }>) => {
+  const userId = getCurrentUserId();
+  const changeDescriptions = Object.entries(changes).map(([field, values]) => 
+    `${field}: ${values.old} → ${values.new}`
+  ).join(', ');
+  
+  await activityApi.logVDCRActivity({
+    projectId,
+    vdcrId,
+    activityType: ActivityType.VDCR_UPDATED,
+    actionDescription: `VDCR record updated: ${documentName} - ${changeDescriptions}`,
+    createdBy: userId,
+    metadata: { documentName, changes }
+  });
+};
+
+// Log single field update (for individual field changes)
+export const logVDCRFieldUpdated = async (projectId: string, vdcrId: string, documentName: string, fieldName: string, oldValue: string, newValue: string) => {
+  const userId = getCurrentUserId();
+  await activityApi.logVDCRActivity({
+    projectId,
+    vdcrId,
+    activityType: ActivityType.VDCR_FIELD_UPDATED,
+    actionDescription: `VDCR ${fieldName} updated: ${documentName} - ${oldValue} → ${newValue}`,
+    fieldName: fieldName,
+    oldValue: String(oldValue),
+    newValue: String(newValue),
+    createdBy: userId,
+    metadata: { documentName, fieldName }
+  });
+};
+
+export const logVDCRStatusChanged = async (projectId: string, vdcrId: string, documentName: string, oldStatus: string, newStatus: string) => {
+  const userId = getCurrentUserId();
+  await activityApi.logVDCRActivity({
+    projectId,
+    vdcrId,
+    activityType: ActivityType.VDCR_STATUS_CHANGED,
+    actionDescription: `VDCR status changed: ${documentName} - ${oldStatus} → ${newStatus}`,
+    fieldName: 'status',
+    oldValue: oldStatus,
+    newValue: newStatus,
+    createdBy: userId,
+    metadata: { documentName }
+  });
+};
+
+export const logVDCRDocumentUploaded = async (projectId: string, vdcrId: string, documentName: string, fileName: string) => {
+  const userId = getCurrentUserId();
+  await activityApi.logVDCRActivity({
+    projectId,
+    vdcrId,
+    activityType: ActivityType.VDCR_DOCUMENT_UPLOADED,
+    actionDescription: `Document uploaded to VDCR: ${documentName} - ${fileName}`,
+    createdBy: userId,
+    metadata: { documentName, fileName }
+  });
+};
+
+export const logVDCRDeleted = async (projectId: string, vdcrId: string, documentName: string) => {
+  const userId = getCurrentUserId();
+  await activityApi.logVDCRActivity({
+    projectId,
+    vdcrId,
+    activityType: ActivityType.VDCR_DELETED,
+    actionDescription: `VDCR record deleted: ${documentName}`,
+    createdBy: userId,
+    metadata: { documentName }
   });
 };
